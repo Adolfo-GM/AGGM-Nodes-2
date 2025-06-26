@@ -28,6 +28,8 @@
     --context-menu-item-hover: #555555;
     --search-input-bg: #3c3c3c;
     --search-input-border: #555;
+    --danger-color: #ff4d4d;
+    --danger-hover-bg: #ff3333;
   }
   body, html {
     margin: 0;
@@ -112,6 +114,7 @@
     width: 100%;
     height: 100%;
     pointer-events: none;
+    transform-origin: 0 0;
   }
   .node {
     position: absolute;
@@ -187,7 +190,6 @@
     resize: vertical;
     min-height: 40px;
   }
-  /* --- SLIDER STYLES --- */
   input[type="range"] {
     -webkit-appearance: none;
     appearance: none;
@@ -291,6 +293,45 @@
   .context-menu-item:hover {
     background-color: var(--context-menu-item-hover);
   }
+  #top-right-controls {
+    position: fixed;
+    top: 15px;
+    right: 20px;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background-color: var(--sidebar-bg);
+    padding: 8px 12px;
+    border-radius: 12px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+  }
+  #project-name-input {
+    background-color: var(--search-input-bg);
+    color: var(--text-color);
+    border: 1px solid var(--node-border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 0.9rem;
+  }
+  #project-name-input:focus {
+    outline: none;
+    border-color: var(--search-input-border);
+  }
+  #clear-workspace-btn {
+    padding: 8px 12px;
+    font-size: 0.9rem;
+    background-color: var(--danger-color);
+    color: var(--text-color);
+    font-weight: bold;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+  }
+  #clear-workspace-btn:hover {
+    background-color: var(--danger-hover-bg);
+  }
 </style>
 <meta name="author" content="Adolfo GM">
 <meta name="description" content="Node IDE Editor - Created by Adolfo GM">
@@ -312,10 +353,16 @@
         </div>
   </div>
   <div id="canvas">
+    <svg id="connections" xmlns="http://www.w3.org/2000/svg" style="overflow: visible;"></svg>
     <div id="canvas-content-wrapper">
-      <svg id="connections" xmlns="http://www.w3.org/2000/svg" style="overflow: visible;"></svg>
     </div>
   </div>
+  
+  <div id="top-right-controls">
+    <input type="text" id="project-name-input" placeholder="Project Name" title="Current Project Name">
+    <button id="clear-workspace-btn" title="Clear Workspace">Clear</button>
+  </div>
+
   <button id="run-btn" title="Run the node graph">▶ Run</button>
 </div>
 
@@ -435,6 +482,7 @@
                 });
 
                 redrawAllConnections();
+                saveStateToLocalStorage();
             });
         },
         compute(inputs) {
@@ -574,7 +622,6 @@
     dragOffsetY: 0,
     connecting: null,
     contextMenuNodeId: null,
-    // State for pan and zoom
     canvasScale: 1,
     canvasTranslateX: 0,
     canvasTranslateY: 0,
@@ -593,8 +640,53 @@
   const importNodesFile = document.getElementById('import-nodes-file');
   const contextMenu = document.getElementById('context-menu');
   const searchNodesInput = document.getElementById('search-nodes');
+  const projectNameInput = document.getElementById('project-name-input');
+  const clearWorkspaceBtn = document.getElementById('clear-workspace-btn');
 
-  function createNode(typeKey, x, y) {
+  function saveStateToLocalStorage() {
+      const state = {
+        projectName: projectNameInput.value,
+        graph: exportGraphData(),
+        transform: {
+            scale: app.canvasScale,
+            translateX: app.canvasTranslateX,
+            translateY: app.canvasTranslateY
+        },
+        nextNodeId: app.nextNodeId
+      };
+      localStorage.setItem('aggmNodesProject', JSON.stringify(state));
+  }
+
+  function loadStateFromLocalStorage() {
+    const savedStateJSON = localStorage.getItem('aggmNodesProject');
+    if (!savedStateJSON) return;
+
+    try {
+        const savedState = JSON.parse(savedStateJSON);
+
+        clearWorkbench(false); 
+
+        projectNameInput.value = savedState.projectName || 'My Project';
+        app.nodes = savedState.graph.nodes || [];
+        app.connections = savedState.graph.connections || [];
+        app.nextNodeId = savedState.nextNodeId || Math.max(0, ...app.nodes.map(n => n.id)) + 1;
+        
+        if (savedState.transform) {
+            app.canvasScale = savedState.transform.scale || 1;
+            app.canvasTranslateX = savedState.transform.translateX || 0;
+            app.canvasTranslateY = savedState.transform.translateY || 0;
+        }
+
+        app.nodes.forEach(node => renderNode(node));
+        updateCanvasTransform();
+        
+    } catch (error) {
+        console.error("Failed to load saved state:", error);
+        localStorage.removeItem('aggmNodesProject'); 
+    }
+  }
+
+  function createNode(typeKey, x, y, id) {
     const type = nodeTypes[typeKey];
     if (!type) return;
     
@@ -610,17 +702,21 @@
         initialY = y;
     }
 
-
     const node = {
-      id: app.nextNodeId++,
+      id: id || app.nextNodeId++,
       type: typeKey,
       x: initialX,
       y: initialY,
       dom: null,
       value: undefined
     };
-    app.nodes.push(node);
+    if (!id) {
+        app.nodes.push(node);
+    }
     renderNode(node);
+    if (!id) {
+        saveStateToLocalStorage();
+    }
   }
 
   function renderNode(node) {
@@ -661,15 +757,23 @@
         type.setupEventListeners(node);
     }
 
-    nodeEl.querySelector('.node-header').addEventListener('mousedown', onNodeDragStart);
+    nodeEl.querySelectorAll('input, textarea').forEach(input => {
+        input.addEventListener('change', () => {
+            if (type.update) type.update(node);
+            saveStateToLocalStorage();
+        });
+    });
 
+    nodeEl.querySelector('.node-header').addEventListener('mousedown', onNodeDragStart);
     nodeEl.querySelectorAll('.io-connector').forEach(connector => {
       connector.addEventListener('mousedown', onConnectorClick);
     });
   }
   
   function updateCanvasTransform() {
-      canvasContentWrapper.style.transform = `translate(${app.canvasTranslateX}px, ${app.canvasTranslateY}px) scale(${app.canvasScale})`;
+      const transform = `translate(${app.canvasTranslateX}px, ${app.canvasTranslateY}px) scale(${app.canvasScale})`;
+      canvasContentWrapper.style.transform = transform;
+      connectionsSvg.style.transform = transform;
       redrawAllConnections();
   }
 
@@ -690,8 +794,8 @@
     const wrapperRect = canvasContentWrapper.getBoundingClientRect();
     const rect = el.getBoundingClientRect();
     
-    const x = rect.left + rect.width / 2 - wrapperRect.left;
-    const y = rect.top + rect.height / 2 - wrapperRect.top;
+    const x = (rect.left + rect.width / 2 - wrapperRect.left) / app.canvasScale;
+    const y = (rect.top + rect.height / 2 - wrapperRect.top) / app.canvasScale;
 
     return { x, y };
   }
@@ -710,18 +814,13 @@
             line.setAttribute('y1', fromPos.y);
             line.setAttribute('x2', toPos.x);
             line.setAttribute('y2', toPos.y);
-        } else {
-            line.remove();
-            app.connections = app.connections.filter(conn => 
-                !(conn.fromNodeId === fromNodeId && conn.fromOutput === fromOutput && 
-                  conn.toNodeId === toNodeId && conn.toInput === toInput)
-            );
         }
     });
   }
   
   function redrawAllConnections() {
     connectionsSvg.innerHTML = '';
+    
     for (const conn of app.connections) {
       const fromPos = getConnectorPosition(conn.fromNodeId, 'output', conn.fromOutput);
       const toPos = getConnectorPosition(conn.toNodeId, 'input', conn.toInput);
@@ -767,6 +866,7 @@
       nodeEl.remove();
     }
     redrawAllConnections();
+    saveStateToLocalStorage();
   }
 
   function duplicateNode(nodeId) {
@@ -793,19 +893,28 @@
 
     app.nodes.push(newNode);
     renderNode(newNode);
+    saveStateToLocalStorage();
   }
 
-  function clearWorkbench() {
+  function clearWorkbench(confirmFirst = true) {
+    if (confirmFirst) {
+        if (!confirm("Are you sure you want to clear the entire workspace? This cannot be undone.")) {
+            return;
+        }
+    }
     app.nodes = [];
     app.connections = [];
     app.nextNodeId = 1;
+    projectNameInput.value = "My Project";
     canvasContentWrapper.querySelectorAll('.node').forEach(nodeEl => nodeEl.remove());
     connectionsSvg.innerHTML = '';
-    // Reset pan and zoom
     app.canvasScale = 1;
     app.canvasTranslateX = 0;
     app.canvasTranslateY = 0;
     updateCanvasTransform();
+    if (confirmFirst) {
+        saveStateToLocalStorage();
+    }
   }
 
   function onNodeDragStart(e) {
@@ -842,6 +951,7 @@
   function onNodeDragEnd() {
     if (app.draggedNode) {
       app.draggedNode.dom.classList.remove('dragging');
+      saveStateToLocalStorage();
     }
     app.draggedNode = null;
     window.removeEventListener('mousemove', onNodeDrag);
@@ -881,6 +991,7 @@
 
         cancelConnecting();
         redrawAllConnections();
+        saveStateToLocalStorage();
 
     } else {
         startConnecting(clickedNodeId, name, type);
@@ -890,10 +1001,12 @@
   function onConnectionDrag(e) {
     if (!app.connecting) return;
     e.preventDefault();
-    const wrapperRect = canvasContentWrapper.getBoundingClientRect();
-    const x = e.clientX - wrapperRect.left;
-    const y = e.clientY - wrapperRect.top;
     
+    const svgRect = connectionsSvg.getBoundingClientRect();
+
+    const x = (e.clientX - svgRect.left) / app.canvasScale;
+    const y = (e.clientY - svgRect.top) / app.canvasScale;
+
     app.connecting.tempLine.setAttribute('x2', x);
     app.connecting.tempLine.setAttribute('y2', y);
   }
@@ -965,11 +1078,12 @@
       app.isPanning = false;
       canvas.style.cursor = 'default';
       window.removeEventListener('mousemove', onCanvasPan);
+      saveStateToLocalStorage();
   }
 
   function onCanvasWheel(e) {
       e.preventDefault();
-      const zoomIntensity = 0.1;
+      const zoomIntensity = 0.05; 
       const minScale = 0.2;
       const maxScale = 2.5;
       
@@ -987,6 +1101,7 @@
       app.canvasScale = newScale;
       
       updateCanvasTransform();
+      saveStateToLocalStorage();
   }
 
   async function evaluateNodeOutput(nodeId, outputName, visited = new Set()) {
@@ -996,20 +1111,15 @@
         return null;
     }
     visited.add(visitedKey);
-
     const node = app.nodes.find(n => n.id === nodeId);
     if (!node) return null;
-
     const type = nodeTypes[node.type];
-    
     if (type.update) {
       type.update(node);
     }
-
     if (type.getOutput) {
       return type.getOutput.call(node, outputName);
     }
-
     if (type.compute) {
       const inputs = {};
       const requiredInputs = typeof type.inputs === 'function' ? type.inputs(node) : type.inputs;
@@ -1056,15 +1166,12 @@
     app.nodes.forEach(node => {
         if (node.type === 'OutputNode') {
             const contentDiv = node.dom.querySelector('.node-content');
-            if(contentDiv) {
-                contentDiv.textContent = 'Calculating...';
-            }
+            if(contentDiv) contentDiv.textContent = 'Calculating...';
         } else if (node.type === 'AskPollinationsNode') {
             const resultSpan = node.dom.querySelector('.pollinations-result');
             if (resultSpan) resultSpan.textContent = '...';
         }
     });
-
 
     for (const outNode of outputNodes) {
       const conn = app.connections.find(c => c.toNodeId === outNode.id && c.toInput === "input");
@@ -1089,12 +1196,8 @@
 
     return {
       nodes: app.nodes.map(node => {
-        const exportedNode = {
-          id: node.id,
-          type: node.type,
-          x: node.x,
-          y: node.y
-        };
+        const { dom, ...rest } = node;
+        const exportedNode = { ...rest };
         if (['NumberNode', 'TextNode', 'AskPollinationsNode'].includes(node.type) && node.value !== undefined) {
           exportedNode.value = node.value;
         }
@@ -1103,101 +1206,23 @@
         }
         return exportedNode;
       }),
-      connections: app.connections.map(conn => ({
-        fromNodeId: conn.fromNodeId,
-        fromOutput: conn.fromOutput,
-        toNodeId: conn.toNodeId,
-        toInput: conn.toInput
-      }))
+      connections: app.connections
     };
   }
   
-  function generateJsCode(graphData) {
+  function generateJsCode(graphData, projectName) {
     return `
-const fetch = require('node-fetch'); // Add this line if running in Node.js
-const nodeGraph = ${JSON.stringify(graphData, null, 2)};
-
+// Project: ${projectName}
 // Created using Adolfo GM's Node Graph Editor
-
-const exportedNodeTypes = {
-  NumberNode: { getOutput: (node) => node.value },
-  TextNode: { getOutput: (node) => node.value },
-  CurrentDateNode: { getOutput: () => new Date().toISOString().slice(0, 10) },
-  CurrentTimeNode: { getOutput: () => new Date().toTimeString().slice(0, 8) },
-  SplitterNode: { compute: (inputs) => inputs["input"] },
-  AddNode: { compute: (inputs) => (typeof inputs.a === 'number' && typeof inputs.b === 'number') ? inputs.a + inputs.b : null },
-  SubtractNode: { compute: (inputs) => (typeof inputs.a === 'number' && typeof inputs.b === 'number') ? inputs.a - inputs.b : null },
-  MultiplyNode: { compute: (inputs) => (typeof inputs.x === 'number' && typeof inputs.y === 'number') ? inputs.x * inputs.y : null },
-  DivideNode: { compute: (inputs) => (typeof inputs.a === 'number' && typeof inputs.b === 'number' && inputs.b !== 0) ? inputs.a / inputs.b : null },
-  MergeTextNode: { compute: (inputs) => String(inputs.text1 ?? "") + String(inputs.text2 ?? "") },
-  AskPollinationsNode: {
-    compute: async function(inputs) {
-      const promptText = inputs.prompt ?? (this.value || "");
-      if (!promptText) { console.warn("Pollinations: No prompt."); return null; }
-      try {
-        const res = await fetch(\`https://text.pollinations.ai/\${encodeURIComponent(promptText)}\`);
-        if (!res.ok) throw new Error(\`HTTP error! status: \${res.status}\`);
-        return await res.text();
-      } catch (e) { console.error("Error fetching Pollinations:", e); return null; }
-    }
-  },
-  OutputNode: {}
-};
-
-async function executeNodeGraph(graph, defs) {
-  const outputs = new Map();
-  async function resolve(nodeId, outputName, visited = new Set()) {
-    const key = \`\${nodeId}-\${outputName}\`;
-    if (visited.has(key)) { console.warn("Circular dependency:", key); return null; }
-    if (outputs.has(key)) return outputs.get(key);
-    
-    const node = graph.nodes.find(n => n.id === nodeId);
-    const typeDef = defs[node.type];
-    let result = null;
-
-    if (typeDef.getOutput) {
-      result = typeDef.getOutput(node);
-    } else if (typeDef.compute) {
-      const inputs = {};
-      const requiredIns = Array.isArray(typeDef.inputs) ? typeDef.inputs : (typeDef.inputs ? typeDef.inputs(node) : []);
-      for (const inputName of requiredIns) {
-        const conn = graph.connections.find(c => c.toNodeId === nodeId && c.toInput === inputName);
-        if (conn) {
-          inputs[inputName] = await resolve(conn.fromNodeId, conn.fromOutput, new Set(visited));
-        } else {
-          inputs[inputName] = (node.type === 'AskPollinationsNode' && inputName === 'prompt') ? node.value : null;
-        }
-      }
-      result = await typeDef.compute.call(node, inputs);
-    }
-    
-    const requiredOuts = Array.isArray(typeDef.outputs) ? typeDef.outputs : (typeDef.outputs ? typeDef.outputs(node) : []);
-    for (const outName of requiredOuts) {
-      outputs.set(\`\${nodeId}-\${outName}\`, result);
-    }
-    return result;
-  }
-
-  const final = {};
-  for (const outNode of graph.nodes.filter(n => n.type === 'OutputNode')) {
-    const conn = graph.connections.find(c => c.toNodeId === outNode.id);
-    final[\`Output_\${outNode.id}\`] = conn ? await resolve(conn.fromNodeId, conn.fromOutput) : null;
-  }
-  return final;
-}
-
-executeNodeGraph(nodeGraph, exportedNodeTypes)
-  .then(results => {
-    console.log("Graph Execution Results:", JSON.stringify(results, null, 2));
-  })
-  .catch(err => {
-    console.error("Error executing node graph:", err);
-  });
+// To run this script, you need Node.js and node-fetch: npm install node-fetch
+const fetch = require('node-fetch');
+const nodeGraph = ${JSON.stringify(graphData, null, 2)};
 `;
   }
 
-  function generatePythonCode(graphData) {
+  function generatePythonCode(graphData, projectName) {
     return `
+# Project: ${projectName}
 # Created using Adolfo GM's Node Graph Editor
 # NOTE: Please install the 'requests' library using 'pip install requests' before running this script.
 
@@ -1206,79 +1231,6 @@ import json
 from datetime import datetime
 
 node_graph = ${JSON.stringify(graphData, null, 2)}
-
-def ask_pollinations_api(prompt_text):
-    if not prompt_text:
-        print("Pollinations: No prompt provided.")
-        return None
-    try:
-        url = f"https://text.pollinations.ai/{requests.utils.quote(str(prompt_text))}"
-        response = requests.get(url)
-        response.raise_for_status()
-        return response.text
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching from Pollinations: {e}")
-        return None
-
-node_definitions = {
-    "NumberNode": {"get_output": lambda node: node.get("value")},
-    "TextNode": {"get_output": lambda node: node.get("value")},
-    "CurrentDateNode": {"get_output": lambda node: datetime.now().strftime("%Y-%m-%d")},
-    "CurrentTimeNode": {"get_output": lambda node: datetime.now().strftime("%H:%M:%S")},
-    "SplitterNode": {"compute": lambda inputs: inputs.get("input")},
-    "AddNode": {"compute": lambda inputs: inputs.get("a") + inputs.get("b") if isinstance(inputs.get("a"), (int, float)) and isinstance(inputs.get("b"), (int, float)) else None},
-    "SubtractNode": {"compute": lambda inputs: inputs.get("a") - inputs.get("b") if isinstance(inputs.get("a"), (int, float)) and isinstance(inputs.get("b"), (int, float)) else None},
-    "MultiplyNode": {"compute": lambda inputs: inputs.get("x") * inputs.get("y") if isinstance(inputs.get("x"), (int, float)) and isinstance(inputs.get("y"), (int, float)) else None},
-    "DivideNode": {"compute": lambda inputs: inputs.get("a") / inputs.get("b") if isinstance(inputs.get("a"), (int, float)) and isinstance(inputs.get("b"), (int, float)) and inputs.get("b") != 0 else None},
-    "MergeTextNode": {"compute": lambda inputs: str(inputs.get("text1") or "") + str(inputs.get("text2") or "")},
-    "AskPollinationsNode": {"compute": (lambda node: lambda inputs: ask_pollinations_api(inputs.get("prompt") or node.get("value")))},
-    "OutputNode": {}
-}
-
-def execute_node_graph(graph, defs):
-    outputs = {}
-    def resolve(node_id, output_name, visited=None):
-        visited = visited or set()
-        key = f"{node_id}-{output_name}"
-        if key in visited:
-            print(f"Circular dependency: {key}")
-            return None
-        if key in outputs:
-            return outputs[key]
-        
-        node = next((n for n in graph["nodes"] if n["id"] == node_id), None)
-        type_def = defs.get(node["type"])
-        result = None
-
-        if "get_output" in type_def:
-            result = type_def["get_output"](node)
-        elif "compute" in type_def:
-            inputs = {}
-            # Simplified input resolution for this generated script
-            for conn in graph["connections"]:
-                if conn["toNodeId"] == node_id:
-                    inputs[conn["toInput"]] = resolve(conn["fromNodeId"], conn["fromOutput"], visited | {key})
-
-            # Handle unconnected prompt for AskPollinations
-            if node["type"] == 'AskPollinationsNode' and 'prompt' not in inputs:
-                inputs['prompt'] = node.get('value')
-            
-            compute_func = type_def["compute"](node) if node["type"] == "AskPollinationsNode" else type_def["compute"]
-            result = compute_func(inputs)
-        
-        outputs[key] = result
-        return result
-
-    final_outputs = {}
-    for out_node in [n for n in graph["nodes"] if n["type"] == 'OutputNode']:
-        conn = next((c for c in graph["connections"] if c["toNodeId"] == out_node["id"]), None)
-        final_outputs[f"Output_{out_node['id']}"] = resolve(conn["fromNodeId"], conn["fromOutput"]) if conn else None
-    
-    return final_outputs
-
-if __name__ == "__main__":
-    results = execute_node_graph(node_graph, node_definitions)
-    print("Graph Execution Results:", json.dumps(results, indent=2))
 `;
   }
   
@@ -1300,17 +1252,21 @@ if __name__ == "__main__":
         return;
     }
     
+    const projectName = projectNameInput.value.trim() || 'UntitledProject';
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const zipFilename = `${projectName}_${dateStr}.zip`;
+
     const graphData = exportGraphData();
-    const jsCode = generateJsCode(graphData);
-    const pythonCode = generatePythonCode(graphData);
+    const jsCode = generateJsCode(graphData, projectName); 
+    const pythonCode = generatePythonCode(graphData, projectName); 
 
     const zip = new JSZip();
-    const folder = zip.folder("aggm-nodes");
-    folder.file("nodes_graph.js", jsCode);
-    folder.file("nodes_graph.py", pythonCode);
+    const folder = zip.folder(projectName);
+    folder.file(`${projectName}.js`, jsCode);
+    folder.file(`${projectName}.py`, pythonCode);
 
     const blob = await zip.generateAsync({ type: "blob" });
-    downloadFile(blob, 'aggm-nodes.zip', 'application/zip');
+    downloadFile(blob, zipFilename, 'application/zip');
   }
 
   function importNodes() {
@@ -1342,35 +1298,15 @@ if __name__ == "__main__":
             }
         }
         
-        clearWorkbench();
+        clearWorkbench(false); 
 
-        app.nodes = [];
-        app.connections = [];
-        app.nextNodeId = 1;
+        app.nodes = importedGraph.nodes || [];
+        app.connections = importedGraph.connections || [];
+        app.nextNodeId = Math.max(0, ...app.nodes.map(n => n.id)) + 1;
 
-        if (importedGraph.nodes) {
-          importedGraph.nodes.forEach(n => {
-            const newNode = {
-              id: n.id,
-              type: n.type,
-              x: n.x,
-              y: n.y,
-              dom: null,
-              value: n.value,
-              outputCount: n.outputCount
-            };
-            app.nodes.push(newNode);
-            renderNode(newNode);
-            app.nextNodeId = Math.max(app.nextNodeId, n.id + 1);
-          });
-        }
-
-
-        if (importedGraph.connections) {
-          app.connections = importedGraph.connections.map(c => ({...c}));
-        }
+        app.nodes.forEach(node => renderNode(node));
         redrawAllConnections();
-
+        saveStateToLocalStorage();
         console.log("Nodes imported successfully!");
 
       } catch (error) {
@@ -1385,7 +1321,7 @@ if __name__ == "__main__":
   function createSVGLine(x1, y1, x2, y2) {
     const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
     line.setAttribute("stroke", "var(--connector-color)");
-    line.setAttribute("stroke-width", "3");
+    line.setAttribute("stroke-width", `${2 / app.canvasScale}`);
     line.setAttribute("stroke-linecap", "round");
     line.setAttribute("x1", x1);
     line.setAttribute("y1", y1);
@@ -1416,6 +1352,8 @@ if __name__ == "__main__":
     exportProjectBtn.onclick = exportProjectToZip;
     importNodesBtn.onclick = importNodes;
     importNodesFile.addEventListener('change', handleFileImport);
+    clearWorkspaceBtn.onclick = () => clearWorkbench(true);
+    projectNameInput.addEventListener('input', saveStateToLocalStorage);
 
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     canvas.addEventListener('mousedown', onCanvasMouseDown);
@@ -1431,6 +1369,8 @@ if __name__ == "__main__":
     searchNodesInput.addEventListener('input', (e) => {
       renderSidebar(e.target.value);
     });
+
+    loadStateFromLocalStorage();
   }
 
   initialize();
