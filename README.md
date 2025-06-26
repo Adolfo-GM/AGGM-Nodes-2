@@ -1,4 +1,4 @@
-![Aggm Nodes](logo.png)
+<img src="logo.png" alt="Aggm Nodes" width="120"/>
 
 # Aggm Nodes 
 ## 2.0
