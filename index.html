@@ -347,7 +347,7 @@
     <input type="text" id="search-nodes" placeholder="Search nodes" />
     <div id="node-list"></div>
     <div class="control-buttons">
-        <input type="file" id="import-nodes-file" accept=".json,.js" style="display: none;" />
+        <input type="file" id="import-nodes-file" accept=".json,.js,.py" style="display: none;" />
         <button id="import-nodes-btn">Import</button>
         <button id="export-project-btn">Export Project</button>
         </div>
@@ -578,11 +578,16 @@
       },
       async compute(inputs) {
         const promptText = inputs["prompt"] !== null ? String(inputs["prompt"]) : (this.value || "");
-        const resultSpan = this.dom.querySelector('.pollinations-result');
-        if (resultSpan) resultSpan.textContent = 'Loading...';
+        if (this.dom) {
+            const resultSpan = this.dom.querySelector('.pollinations-result');
+            if (resultSpan) resultSpan.textContent = 'Loading...';
+        }
 
         if (!promptText) {
-          if (resultSpan) resultSpan.textContent = 'No prompt provided.';
+          if (this.dom) {
+            const resultSpan = this.dom.querySelector('.pollinations-result');
+            if (resultSpan) resultSpan.textContent = 'No prompt provided.';
+          }
           return null;
         }
 
@@ -594,11 +599,17 @@
             throw new Error(`HTTP error! status: ${response.status}`);
           }
           const textResponse = await response.text();
-          if (resultSpan) resultSpan.textContent = textResponse.substring(0, 50) + (textResponse.length > 50 ? '...' : '');
+          if (this.dom) {
+            const resultSpan = this.dom.querySelector('.pollinations-result');
+            if(resultSpan) resultSpan.textContent = textResponse.substring(0, 50) + (textResponse.length > 50 ? '...' : '');
+          }
           return textResponse;
         } catch (error) {
           console.error("Error fetching from Pollinations:", error);
-          if (resultSpan) resultSpan.textContent = `Error: ${error.message}`;
+           if (this.dom) {
+            const resultSpan = this.dom.querySelector('.pollinations-result');
+            if(resultSpan) resultSpan.textContent = `Error: ${error.message}`;
+           }
           return null;
         }
       }
@@ -758,7 +769,7 @@
     }
 
     nodeEl.querySelectorAll('input, textarea').forEach(input => {
-        input.addEventListener('change', () => {
+        input.addEventListener('input', () => {
             if (type.update) type.update(node);
             saveStateToLocalStorage();
         });
@@ -913,7 +924,7 @@
     app.canvasTranslateY = 0;
     updateCanvasTransform();
     if (confirmFirst) {
-        saveStateToLocalStorage();
+        localStorage.removeItem('aggmNodesProject');
     }
   }
 
@@ -1114,15 +1125,18 @@
     const node = app.nodes.find(n => n.id === nodeId);
     if (!node) return null;
     const type = nodeTypes[node.type];
+    
     if (type.update) {
       type.update(node);
     }
+
     if (type.getOutput) {
       return type.getOutput.call(node, outputName);
     }
     if (type.compute) {
       const inputs = {};
       const requiredInputs = typeof type.inputs === 'function' ? type.inputs(node) : type.inputs;
+      
       for (const inputName of requiredInputs) {
         const conn = app.connections.find(c => c.toNodeId === nodeId && c.toInput === inputName);
         if (!conn) {
@@ -1181,7 +1195,9 @@
       }
       const contentDiv = outNode.dom.querySelector('.node-content');
       if(contentDiv) {
-        contentDiv.textContent = result !== null ? JSON.stringify(result, null, 2) : 'null';
+        const resultString = result !== null ? JSON.stringify(result, null, 2) : 'null';
+        contentDiv.textContent = resultString;
+        console.log(`Output for Node ${outNode.id}:`, result);
       }
     }
   }
@@ -1198,10 +1214,11 @@
       nodes: app.nodes.map(node => {
         const { dom, ...rest } = node;
         const exportedNode = { ...rest };
-        if (['NumberNode', 'TextNode', 'AskPollinationsNode'].includes(node.type) && node.value !== undefined) {
+        
+        if (node.value !== undefined) {
           exportedNode.value = node.value;
         }
-        if (node.type === 'SplitterNode') {
+        if (node.type === 'SplitterNode' && node.outputCount !== undefined) {
             exportedNode.outputCount = node.outputCount;
         }
         return exportedNode;
@@ -1211,12 +1228,102 @@
   }
   
   function generateJsCode(graphData, projectName) {
+    const runtimeNodeTypes = {};
+    for(const key in nodeTypes){
+        const type = nodeTypes[key];
+        runtimeNodeTypes[key] = {};
+        if(type.getOutput) runtimeNodeTypes[key].getOutput = type.getOutput.toString();
+        if(type.compute) runtimeNodeTypes[key].compute = type.compute.toString().replace(/this\.dom/g, 'null');
+        if(type.inputs) runtimeNodeTypes[key].inputs = type.inputs;
+    }
+
     return `
 // Project: ${projectName}
 // Created using Adolfo GM's Node Graph Editor
-// To run this script, you need Node.js and node-fetch: npm install node-fetch
-const fetch = require('node-fetch');
-const nodeGraph = ${JSON.stringify(graphData, null, 2)};
+// This is a self-contained, runnable client-side script.
+
+(async () => {
+    const nodeGraph = ${JSON.stringify(graphData, null, 2)};
+
+    const runtimeNodeTypes = {
+    ${Object.entries(runtimeNodeTypes).map(([key, val]) => `
+        "${key}": {
+            ${val.getOutput ? `getOutput: ${val.getOutput},` : ''}
+            ${val.compute ? `compute: ${val.compute},` : ''}
+            inputs: ${JSON.stringify(val.inputs)}
+        }`).join(',\n')}
+    };
+
+    const evaluatedOutputs = new Map();
+
+    async function evaluateNodeOutput(nodeId, outputName, visited = new Set()) {
+        const visitedKey = \`\${nodeId}-\${outputName}\`;
+        if (evaluatedOutputs.has(visitedKey)) {
+            return evaluatedOutputs.get(visitedKey);
+        }
+        if (visited.has(visitedKey)) {
+            console.warn("Circular dependency detected at node", nodeId);
+            return null;
+        }
+        visited.add(visitedKey);
+
+        const node = nodeGraph.nodes.find(n => n.id === nodeId);
+        if (!node) return null;
+
+        const type = runtimeNodeTypes[node.type];
+        if (!type) {
+            console.error(\`Unknown node type: \${node.type}\`);
+            return null;
+        }
+        
+        let result = null;
+        if (type.getOutput) {
+            result = type.getOutput.call(node, outputName);
+        } else if (type.compute) {
+            const inputs = {};
+            const requiredInputs = typeof type.inputs === 'function' ? type.inputs(node) : type.inputs;
+
+            for (const inputName of requiredInputs) {
+                const conn = nodeGraph.connections.find(c => c.toNodeId === nodeId && c.toInput === inputName);
+                if (!conn) {
+                    if (node.type === 'AskPollinationsNode' && inputName === 'prompt') {
+                        inputs[inputName] = node.value;
+                    } else {
+                        inputs[inputName] = null;
+                    }
+                    continue;
+                }
+                inputs[inputName] = await evaluateNodeOutput(conn.fromNodeId, conn.fromOutput, new Set(visited));
+            }
+            result = await type.compute.call(node, inputs);
+        }
+        
+        evaluatedOutputs.set(visitedKey, result);
+        return result;
+    }
+
+    async function run() {
+        console.log("Running graph: ${projectName}");
+        const outputNodes = nodeGraph.nodes.filter(n => n.type === 'OutputNode');
+
+        if (outputNodes.length === 0) {
+            console.log("No Output Nodes found in the graph.");
+            return;
+        }
+
+        for (const outNode of outputNodes) {
+            const conn = nodeGraph.connections.find(c => c.toNodeId === outNode.id && c.toInput === "input");
+            let result = null;
+            if (conn) {
+                result = await evaluateNodeOutput(conn.fromNodeId, conn.fromOutput);
+            }
+            console.log(\`▶ Result for Output Node \${outNode.id}:\`, result);
+        }
+    }
+
+    await run();
+
+})();
 `;
   }
 
@@ -1224,13 +1331,175 @@ const nodeGraph = ${JSON.stringify(graphData, null, 2)};
     return `
 # Project: ${projectName}
 # Created using Adolfo GM's Node Graph Editor
+# This is a self-contained, runnable Python script.
 # NOTE: Please install the 'requests' library using 'pip install requests' before running this script.
 
-import requests
 import json
+import requests
 from datetime import datetime
 
+# --- Data Structure ---
 node_graph = ${JSON.stringify(graphData, null, 2)}
+
+# --- Node Logic Definitions ---
+def get_output_number(node):
+    return node.get("value", 0)
+
+def get_output_text(node):
+    return node.get("value", "")
+
+def get_output_date(node):
+    return datetime.now().strftime('%Y-%m-%d')
+
+def get_output_time(node):
+    return datetime.now().strftime('%H:%M:%S')
+
+def compute_splitter(inputs):
+    return inputs.get("input")
+
+def compute_add(inputs):
+    a = inputs.get("a")
+    b = inputs.get("b")
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return a + b
+    return None
+
+def compute_subtract(inputs):
+    a = inputs.get("a")
+    b = inputs.get("b")
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return a - b
+    return None
+
+def compute_multiply(inputs):
+    x = inputs.get("x")
+    y = inputs.get("y")
+    if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+        return x * y
+    return None
+
+def compute_divide(inputs):
+    a = inputs.get("a")
+    b = inputs.get("b")
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)) and b != 0:
+        return a / b
+    return None
+
+def compute_merge_text(inputs):
+    text1 = str(inputs.get("text1", ""))
+    text2 = str(inputs.get("text2", ""))
+    return text1 + text2
+
+def compute_ask_pollinations(inputs, node):
+    prompt = inputs.get("prompt") or node.get("value", "")
+    if not prompt:
+        print("PollinationsError: No prompt provided.")
+        return None
+    try:
+        encoded_prompt = requests.utils.quote(prompt)
+        url = f"https://text.pollinations.ai/{encoded_prompt}"
+        response = requests.get(url)
+        response.raise_for_status()
+        return response.text
+    except requests.exceptions.RequestException as e:
+        print(f"PollinationsError: {e}")
+        return None
+
+node_logic = {
+    "NumberNode": {"get_output": get_output_number, "inputs": []},
+    "TextNode": {"get_output": get_output_text, "inputs": []},
+    "CurrentDateNode": {"get_output": get_output_date, "inputs": []},
+    "CurrentTimeNode": {"get_output": get_output_time, "inputs": []},
+    "SplitterNode": {"compute": compute_splitter, "inputs": ["input"]},
+    "AddNode": {"compute": compute_add, "inputs": ["a", "b"]},
+    "SubtractNode": {"compute": compute_subtract, "inputs": ["a", "b"]},
+    "MultiplyNode": {"compute": compute_multiply, "inputs": ["x", "y"]},
+    "DivideNode": {"compute": compute_divide, "inputs": ["a", "b"]},
+    "MergeTextNode": {"compute": compute_merge_text, "inputs": ["text1", "text2"]},
+    "AskPollinationsNode": {"compute": compute_ask_pollinations, "inputs": ["prompt"]},
+    "OutputNode": {"inputs": ["input"]}
+}
+
+# --- Execution Engine ---
+evaluated_outputs = {}
+
+def find_node_by_id(node_id):
+    for node in node_graph["nodes"]:
+        if node["id"] == node_id:
+            return node
+    return None
+
+def evaluate_node_output(node_id, output_name, visited=None):
+    if visited is None:
+        visited = set()
+    
+    visited_key = f"{node_id}-{output_name}"
+    if visited_key in evaluated_outputs:
+        return evaluated_outputs[visited_key]
+    
+    if visited_key in visited:
+        print(f"Warning: Circular dependency detected at node {node_id}")
+        return None
+    
+    visited.add(visited_key)
+
+    node = find_node_by_id(node_id)
+    if not node:
+        return None
+
+    node_type = node["type"]
+    logic = node_logic.get(node_type)
+    if not logic:
+        print(f"Error: Unknown node type '{node_type}'")
+        return None
+
+    result = None
+    if "get_output" in logic:
+        result = logic["get_output"](node)
+    elif "compute" in logic:
+        inputs = {}
+        required_inputs = logic["inputs"]
+        
+        for input_name in required_inputs:
+            conn = next((c for c in node_graph["connections"] if c["toNodeId"] == node_id and c["toInput"] == input_name), None)
+            
+            if not conn:
+                if node_type == "AskPollinationsNode" and input_name == "prompt":
+                    inputs[input_name] = node.get("value")
+                else:
+                    inputs[input_name] = None
+                continue
+
+            inputs[input_name] = evaluate_node_output(conn["fromNodeId"], conn["fromOutput"], visited)
+        
+        # Pollinations node is special, it needs the node object itself
+        if node_type == 'AskPollinationsNode':
+             result = logic["compute"](inputs, node)
+        else:
+             result = logic["compute"](inputs)
+
+    evaluated_outputs[visited_key] = result
+    return result
+
+def main():
+    print(f"Running graph: {projectName}")
+    output_nodes = [n for n in node_graph["nodes"] if n["type"] == "OutputNode"]
+
+    if not output_nodes:
+        print("No Output Nodes found in the graph.")
+        return
+
+    for out_node in output_nodes:
+        conn = next((c for c in node_graph["connections"] if c["toNodeId"] == out_node["id"] and c["toInput"] == "input"), None)
+        result = None
+        if conn:
+            result = evaluate_node_output(conn["fromNodeId"], conn["fromOutput"])
+        
+        print(f"▶ Result for Output Node {out_node['id']}:")
+        print(json.dumps(result, indent=2))
+
+if __name__ == "__main__":
+    main()
 `;
   }
   
@@ -1252,21 +1521,26 @@ node_graph = ${JSON.stringify(graphData, null, 2)}
         return;
     }
     
-    const projectName = projectNameInput.value.trim() || 'UntitledProject';
+    const projectName = projectNameInput.value.trim().replace(/\s+/g, '_') || 'UntitledProject';
     const dateStr = new Date().toISOString().slice(0, 10);
     const zipFilename = `${projectName}_${dateStr}.zip`;
 
     const graphData = exportGraphData();
-    const jsCode = generateJsCode(graphData, projectName); 
-    const pythonCode = generatePythonCode(graphData, projectName); 
+    const jsCode = generateJsCode(graphData, projectName);
+    const pythonCode = generatePythonCode(graphData, projectName);
 
     const zip = new JSZip();
     const folder = zip.folder(projectName);
     folder.file(`${projectName}.js`, jsCode);
     folder.file(`${projectName}.py`, pythonCode);
 
-    const blob = await zip.generateAsync({ type: "blob" });
-    downloadFile(blob, zipFilename, 'application/zip');
+    try {
+        const blob = await zip.generateAsync({ type: "blob" });
+        downloadFile(blob, zipFilename, 'application/zip');
+    } catch(error) {
+        console.error("Failed to generate zip file:", error);
+        alert("An error occurred while creating the zip file.");
+    }
   }
 
   function importNodes() {
@@ -1283,29 +1557,43 @@ node_graph = ${JSON.stringify(graphData, null, 2)}
         const fileContent = e.target.result;
         let importedGraph;
 
-        try {
-            importedGraph = JSON.parse(fileContent);
-        } catch (jsonError) {
-            const jsMatch = fileContent.match(/const nodeGraph = (\{[\s\S]*?\});/);
-            if (jsMatch && jsMatch[1]) {
-                try {
-                   importedGraph = (new Function(`return ${jsMatch[1]}`))();
-                } catch(e) {
-                   throw new Error("Could not parse the nodeGraph object from the JS file.");
-                }
-            } else {
-                 throw new Error("File content is not a valid graph JSON or JS export.");
+        // Try to find a JSON object in JS or Python files
+        const jsonMatch = fileContent.match(/=\s*(\{[\s\S]*?\});?\s*(\n|$)/);
+
+        if (jsonMatch && jsonMatch[1]) {
+            try {
+               importedGraph = JSON.parse(jsonMatch[1]);
+            } catch(e) {
+               throw new Error("Could not parse the JSON object from the script file.");
             }
+        } else {
+            // Fallback to parsing the whole file as JSON
+             try {
+                importedGraph = JSON.parse(fileContent);
+             } catch(jsonError) {
+                 throw new Error("File is not a valid graph JSON or a runnable JS/Python export.");
+             }
         }
         
+        if (!importedGraph.nodes || !importedGraph.connections) {
+            throw new Error("Parsed object is not a valid graph structure.");
+        }
+
         clearWorkbench(false); 
 
         app.nodes = importedGraph.nodes || [];
         app.connections = importedGraph.connections || [];
         app.nextNodeId = Math.max(0, ...app.nodes.map(n => n.id)) + 1;
 
+        // Restore values that might not be in older formats
+        app.nodes.forEach(node => {
+            const type = nodeTypes[node.type];
+            if(type.update) type.update(node);
+        });
+
         app.nodes.forEach(node => renderNode(node));
         redrawAllConnections();
+        updateCanvasTransform();
         saveStateToLocalStorage();
         console.log("Nodes imported successfully!");
 
