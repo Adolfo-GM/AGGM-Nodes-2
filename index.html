@@ -11,7 +11,287 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Aggm Nodes">
 <link rel="apple-touch-icon" href="icon-192x192.png">
-<link rel="stylesheet" href="styles.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root {
+    --bg-color: #000000;
+    --node-bg: #1a1a1a;
+    --node-header-bg: #333333;
+    --node-border: #444444;
+    --text-color: #ffffff;
+    --connector-color: #ffffff;
+    --connector-hover: #cccccc;
+    --btn-bg: #ffffff;
+    --btn-text: #000000;
+    --sidebar-bg: #111111;
+    --context-menu-bg: #222222;
+    --context-menu-item-hover: #555555;
+    --search-input-bg: #3c3c3c;
+    --search-input-border: #555;
+  }
+  body, html {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    overflow: hidden;
+  }
+  #app {
+    display: flex;
+    height: 100vh;
+  }
+  #sidebar {
+    width: 200px;
+    background-color: var(--sidebar-bg);
+    padding: 15px;
+    box-shadow: 3px 0 15px rgba(0,0,0,0.3);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+  }
+  #sidebar h2 {
+    margin-top: 0;
+    font-size: 1.2rem;
+    padding-bottom: 10px;
+    margin-bottom: 10px;
+  }
+  #search-nodes {
+    width: 100%;
+    padding: 8px 10px;
+    margin-bottom: 15px;
+    margin-top: 10px;
+    background-color: var(--search-input-bg);
+    border-radius: 12px;
+    color: var(--text-color);
+    box-sizing: border-box;
+    text-align: center;
+    border: none;
+    border: 1px solid rgba(255, 255, 255, 0);
+  }
+  #search-nodes:focus {
+    outline: none;
+    border: 1px solid var(--search-input-border);
+  }
+  #node-list {
+    flex-grow: 1;
+    overflow-y: auto;
+    margin-bottom: 15px;
+  }
+  .node-type {
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    background-color: var(--node-bg);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+  }
+  .node-type:hover {
+    background-color: var(--node-header-bg);
+  }
+  #canvas {
+    flex-grow: 1;
+    position: relative;
+    overflow: hidden;
+    background-color: #000000;
+    background-image: radial-gradient(circle, #2a2a2a 1px, transparent 1px);
+    background-size: 25px 25px;
+    cursor: default;
+  }
+  #canvas-content-wrapper {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    transform-origin: 0 0;
+  }
+  #connections {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+  .node {
+    position: absolute;
+    background-color: var(--node-bg);
+    border: 1px solid var(--node-border);
+    border-radius: 24px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.4);
+    min-width: 180px;
+    user-select: none;
+    transition: box-shadow 0.2s;
+  }
+  .node.dragging {
+    box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+    z-index: 100;
+  }
+  .node-header {
+    background-color: var(--node-header-bg);
+    color: #fff;
+    padding: 10px 14px;
+    font-weight: bold;
+    cursor: move;
+    border-top-left-radius: 23px;
+    border-top-right-radius: 23px;
+  }
+  .node-io {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+  }
+  .inputs, .outputs {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .io-item {
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+  }
+  .io-connector {
+    width: 14px;
+    height: 14px;
+    background-color: var(--connector-color);
+    border: 3px solid var(--node-bg);
+    border-radius: 50%;
+    cursor: crosshair;
+    transition: background-color 0.2s, transform 0.2s;
+  }
+  .io-connector:hover {
+    background-color: var(--connector-hover);
+    transform: scale(1.2);
+  }
+  .io-connector.input {
+    margin-right: -7px;
+  }
+  .io-connector.output {
+    margin-left: -7px;
+  }
+  input.node-input, .node-content, textarea.node-input {
+    background: var(--bg-color);
+    color: var(--text-color);
+    border: 1px solid var(--node-border);
+    border-radius: 8px;
+    padding: 8px;
+    margin: 5px 10px 10px;
+    width: calc(100% - 36px);
+    box-sizing: border-box;
+  }
+  .node-content {
+    border: none;
+  }
+  textarea.node-input {
+    resize: vertical;
+    min-height: 40px;
+  }
+  /* --- SLIDER STYLES --- */
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-runnable-track {
+    background: var(--search-input-bg);
+    height: 6px;
+    border-radius: 3px;
+  }
+  input[type="range"]::-moz-range-track {
+    background: var(--search-input-bg);
+    height: 6px;
+    border-radius: 3px;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    margin-top: -4px;
+    background-color: var(--btn-bg);
+    height: 14px;
+    width: 14px;
+    border-radius: 50%;
+  }
+  input[type="range"]::-moz-range-thumb {
+    background-color: var(--btn-bg);
+    height: 14px;
+    width: 14px;
+    border-radius: 50%;
+    border: none;
+  }
+  .control-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: auto;
+  }
+  .control-buttons button {
+    padding: 10px 15px;
+    font-size: 1rem;
+    font-weight: bold;
+    background-color: var(--btn-bg);
+    color: var(--btn-text);
+    border: 1px solid var(--btn-bg);
+    border-radius: 10px;
+    cursor: pointer;
+    box-shadow: 0 3px 8px rgba(0,0,0,0.2);
+    transition: background-color 0.2s, color 0.2s, transform 0.2s;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .control-buttons button:hover {
+    background-color: var(--btn-text);
+    color: var(--btn-bg);
+    border-color: var(--btn-bg);
+    transform: translateY(-1px);
+  }
+  #run-btn {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    padding: 12px 20px;
+    font-size: 1.2rem;
+    font-weight: bold;
+    background-color: var(--btn-bg);
+    color: var(--btn-text);
+    border: 1px solid var(--btn-bg);
+    border-radius: 12px;
+    cursor: pointer;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    transition: background-color 0.2s, color 0.2s, transform 0.2s;
+    z-index: 20;
+    width: auto;
+    min-width: 100px;
+    text-align: center;
+  }
+  #run-btn:hover {
+    background-color: var(--btn-text);
+    color: var(--btn-bg);
+    border-color: var(--btn-bg);
+    transform: translateY(-2px);
+  }
+
+  #context-menu {
+    position: absolute;
+    background-color: var(--context-menu-bg);
+    border: 1px solid var(--node-border);
+    border-radius: 8px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+    z-index: 200;
+    display: none;
+    padding: 5px 0;
+  }
+  .context-menu-item {
+    padding: 8px 15px;
+    cursor: pointer;
+    color: var(--text-color);
+    white-space: nowrap;
+  }
+  .context-menu-item:hover {
+    background-color: var(--context-menu-item-hover);
+  }
+</style>
 <meta name="author" content="Adolfo GM">
 <meta name="description" content="Node IDE Editor - Created by Adolfo GM">
 </head>
@@ -28,12 +308,12 @@
     <div class="control-buttons">
         <input type="file" id="import-nodes-file" accept=".json,.js" style="display: none;" />
         <button id="import-nodes-btn">Import</button>
-        <button id="export-js-btn">Export</button>
+        <button id="export-project-btn">Export Project</button>
         </div>
   </div>
   <div id="canvas">
     <div id="canvas-content-wrapper">
-      <svg id="connections"></svg>
+      <svg id="connections" xmlns="http://www.w3.org/2000/svg" style="overflow: visible;"></svg>
     </div>
   </div>
   <button id="run-btn" title="Run the node graph">▶ Run</button>
@@ -44,7 +324,1117 @@
   <div class="context-menu-item" data-action="duplicate">Duplicate Node</div>
 </div>
 
-<script src="script.js"></script>
+<script>
+
+  const nodeTypes = {
+    NumberNode: {
+      title: "Number",
+      inputs: [],
+      outputs: ["value"],
+      renderContent(node) {
+        if (node.value === undefined) node.value = 0;
+        return `<div class="node-content"><input class="node-input number-input" type="number" value="${node.value}" /></div>`;
+      },
+      update(node) {
+        const input = node.dom.querySelector('input.number-input');
+        if (input) node.value = Number(input.value);
+      },
+      getOutput() {
+        return this.value;
+      }
+    },
+    TextNode: {
+      title: "Text",
+      inputs: [],
+      outputs: ["text"],
+      renderContent(node) {
+        if (node.value === undefined) node.value = "";
+        return `<div class="node-content"><input class="node-input text-input" type="text" value="${node.value}" placeholder="Enter text..." /></div>`;
+      },
+      update(node) {
+        const input = node.dom.querySelector('input.text-input');
+        if (input) node.value = input.value;
+      },
+      getOutput() {
+        return this.value;
+      }
+    },
+    CurrentDateNode: {
+        title: "Current Date",
+        inputs: [],
+        outputs: ["dateString"],
+        renderContent() {
+            return `<div class="node-content" style="padding:10px; font-size:0.9rem; text-align:center;"></div>`;
+        },
+        getOutput() {
+            const date = new Date();
+            return date.getFullYear() + '-' + 
+                   String(date.getMonth() + 1).padStart(2, '0') + '-' + 
+                   String(date.getDate()).padStart(2, '0');
+        }
+    },
+    CurrentTimeNode: {
+        title: "Current Time",
+        inputs: [],
+        outputs: ["timeString"],
+        renderContent() {
+            return `<div class="node-content" style="padding:10px; font-size:0.9rem; text-align:center;"></div>`;
+        },
+        getOutput() {
+            const date = new Date();
+            return String(date.getHours()).padStart(2, '0') + ':' + 
+                   String(date.getMinutes()).padStart(2, '0') + ':' + 
+                   String(date.getSeconds()).padStart(2, '0');
+        }
+    },
+    SplitterNode: {
+        title: "Splitter",
+        inputs: ["input"],
+        outputs(node) {
+            if (node.outputCount === undefined) node.outputCount = 2;
+            return Array.from({ length: node.outputCount }, (_, i) => `out ${i + 1}`);
+        },
+        renderContent(node) {
+            const count = node.outputCount || 2;
+            return `
+                <div class="node-content" style="padding:10px;">
+                    <label for="splitter-count-${node.id}" style="font-size:0.9rem;">Outputs: <span id="splitter-label-${node.id}">${count}</span></label>
+                    <input type="range" id="splitter-count-${node.id}" class="splitter-range" min="2" max="6" value="${count}" style="width: calc(100% - 20px); margin: 10px 10px 0 10px; box-sizing: border-box;">
+                </div>
+            `;
+        },
+        setupEventListeners(node) {
+            const slider = node.dom.querySelector('.splitter-range');
+            const label = node.dom.querySelector(`#splitter-label-${node.id}`);
+            const outputsContainer = node.dom.querySelector('.outputs');
+
+            slider.addEventListener('input', () => {
+                const newCount = parseInt(slider.value, 10);
+                node.outputCount = newCount;
+                label.textContent = newCount;
+
+                const type = nodeTypes[node.type];
+                const outputsArray = type.outputs(node);
+
+                app.connections = app.connections.filter(conn => {
+                    if (conn.fromNodeId === node.id) {
+                        const outputIndex = parseInt(conn.fromOutput.split(' ')[1], 10);
+                        return outputIndex <= newCount;
+                    }
+                    return true;
+                });
+
+                outputsContainer.innerHTML = outputsArray.map(name => `
+                    <div class="io-item" style="justify-content:flex-end;">
+                      <span style="margin-right:8px;">${name}</span>
+                      <div class="io-connector output" data-nodeid="${node.id}" data-type="output" data-name="${name}" title="Output: ${name}"></div>
+                    </div>`).join('');
+
+                outputsContainer.querySelectorAll('.io-connector').forEach(connector => {
+                    connector.addEventListener('mousedown', onConnectorClick);
+                });
+
+                redrawAllConnections();
+            });
+        },
+        compute(inputs) {
+            return inputs["input"];
+        }
+    },
+    AddNode: {
+      title: "Add",
+      inputs: ["a", "b"],
+      outputs: ["sum"],
+      renderContent() {
+        return `<div class="node-content" style="padding:10px; font-size:0.9rem;">Adds two numbers.</div>`;
+      },
+      compute(inputs) {
+        const a = inputs["a"];
+        const b = inputs["b"];
+        if (typeof a !== 'number' || typeof b !== 'number') return null;
+        return a + b;
+      }
+    },
+    SubtractNode: {
+      title: "Subtract",
+      inputs: ["a", "b"],
+      outputs: ["difference"],
+      renderContent() {
+        return `<div class="node-content" style="padding:10px; font-size:0.9rem;">Subtracts b from a.</div>`;
+      },
+      compute(inputs) {
+        const a = inputs["a"];
+        const b = inputs["b"];
+        if (typeof a !== 'number' || typeof b !== 'number') return null;
+        return a - b;
+      }
+    },
+    MultiplyNode: {
+      title: "Multiply",
+      inputs: ["x", "y"],
+      outputs: ["product"],
+      renderContent() {
+        return `<div class="node-content" style="padding:10px; font-size:0.9rem;">Multiplies two numbers.</div>`;
+      },
+      compute(inputs) {
+        const x = inputs["x"];
+        const y = inputs["y"];
+        if (typeof x !== 'number' || typeof y !== 'number') return null;
+        return x * y;
+      }
+    },
+    DivideNode: {
+      title: "Divide",
+      inputs: ["a", "b"],
+      outputs: ["quotient"],
+      renderContent() {
+        return `<div class="node-content" style="padding:10px; font-size:0.9rem;">Divides a by b.</div>`;
+      },
+      compute(inputs) {
+        const a = inputs["a"];
+        const b = inputs["b"];
+        if (typeof a !== 'number' || typeof b !== 'number' || b === 0) return null;
+        return a / b;
+      }
+    },
+    MergeTextNode: {
+      title: "Merge Text",
+      inputs: ["text1", "text2"],
+      outputs: ["mergedText"],
+      renderContent() {
+        return `<div class="node-content" style="padding:10px; font-size:0.9rem;">Merges two text strings.</div>`;
+      },
+      compute(inputs) {
+        const text1 = inputs["text1"] !== null ? String(inputs["text1"]) : "";
+        const text2 = inputs["text2"] !== null ? String(inputs["text2"]) : "";
+        return text1 + text2;
+      }
+    },
+    AskPollinationsNode: {
+      title: "Ask Pollinations",
+      inputs: ["prompt"],
+      outputs: ["response"],
+      renderContent(node) {
+        if (node.value === undefined) node.value = "";
+        return `
+          <div class="node-content">
+            <textarea class="node-input text-input" placeholder="Enter prompt or connect..." rows="3">${node.value}</textarea>
+            <div style="padding:5px 10px; font-size:0.8rem; color:#aaa;">Result: <span class="pollinations-result">...</span></div>
+            <div style="font-size: 0.7rem; color: #888; padding: 0 10px 8px; text-align: center; font-style: italic;">Uses an external service (pollinations.ai)</div>
+          </div>
+        `;
+      },
+      update(node) {
+        const textarea = node.dom.querySelector('textarea.text-input');
+        if (textarea) node.value = textarea.value;
+      },
+      async compute(inputs) {
+        const promptText = inputs["prompt"] !== null ? String(inputs["prompt"]) : (this.value || "");
+        const resultSpan = this.dom.querySelector('.pollinations-result');
+        if (resultSpan) resultSpan.textContent = 'Loading...';
+
+        if (!promptText) {
+          if (resultSpan) resultSpan.textContent = 'No prompt provided.';
+          return null;
+        }
+
+        try {
+          const encodedPrompt = encodeURIComponent(promptText);
+          const url = `https://text.pollinations.ai/${encodedPrompt}`;
+          const response = await fetch(url);
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          const textResponse = await response.text();
+          if (resultSpan) resultSpan.textContent = textResponse.substring(0, 50) + (textResponse.length > 50 ? '...' : '');
+          return textResponse;
+        } catch (error) {
+          console.error("Error fetching from Pollinations:", error);
+          if (resultSpan) resultSpan.textContent = `Error: ${error.message}`;
+          return null;
+        }
+      }
+    },
+    OutputNode: {
+      title: "Output",
+      inputs: ["input"],
+      outputs: [],
+      renderContent(node) {
+        return `<div class="node-content" style="padding:10px; font-size:0.9rem; text-align:center; min-height: 20px;"></div>`;
+      }
+    }
+  };
+
+  const app = {
+    nodes: [],
+    connections: [],
+    nextNodeId: 1,
+    draggedNode: null,
+    dragOffsetX: 0,
+    dragOffsetY: 0,
+    connecting: null,
+    contextMenuNodeId: null,
+    // State for pan and zoom
+    canvasScale: 1,
+    canvasTranslateX: 0,
+    canvasTranslateY: 0,
+    isPanning: false,
+    lastPanX: 0,
+    lastPanY: 0,
+  };
+
+  const canvas = document.getElementById('canvas');
+  const canvasContentWrapper = document.getElementById('canvas-content-wrapper');
+  const nodeList = document.getElementById('node-list');
+  const connectionsSvg = document.getElementById('connections');
+  const runBtn = document.getElementById('run-btn');
+  const exportProjectBtn = document.getElementById('export-project-btn');
+  const importNodesBtn = document.getElementById('import-nodes-btn');
+  const importNodesFile = document.getElementById('import-nodes-file');
+  const contextMenu = document.getElementById('context-menu');
+  const searchNodesInput = document.getElementById('search-nodes');
+
+  function createNode(typeKey, x, y) {
+    const type = nodeTypes[typeKey];
+    if (!type) return;
+    
+    let initialX, initialY;
+    if (x === undefined || y === undefined) {
+        const canvasRect = canvas.getBoundingClientRect();
+        const viewCenterX = canvasRect.width / 2;
+        const viewCenterY = canvasRect.height / 2;
+        initialX = (viewCenterX - app.canvasTranslateX) / app.canvasScale;
+        initialY = (viewCenterY - app.canvasTranslateY) / app.canvasScale;
+    } else {
+        initialX = x;
+        initialY = y;
+    }
+
+
+    const node = {
+      id: app.nextNodeId++,
+      type: typeKey,
+      x: initialX,
+      y: initialY,
+      dom: null,
+      value: undefined
+    };
+    app.nodes.push(node);
+    renderNode(node);
+  }
+
+  function renderNode(node) {
+    const type = nodeTypes[node.type];
+    const nodeEl = document.createElement('div');
+    nodeEl.classList.add('node');
+    nodeEl.style.left = node.x + 'px';
+    nodeEl.style.top = node.y + 'px';
+    nodeEl.dataset.id = node.id;
+
+    const outputsArray = typeof type.outputs === 'function' ? type.outputs(node) : type.outputs;
+
+    nodeEl.innerHTML = `
+      <div class="node-header">${type.title}</div>
+      <div class="node-io">
+        <div class="inputs">
+          ${type.inputs.map(name => `
+            <div class="io-item">
+              <div class="io-connector input" data-nodeid="${node.id}" data-type="input" data-name="${name}" title="Input: ${name}"></div>
+              <span style="margin-left:8px;">${name}</span>
+            </div>`).join('')}
+        </div>
+        <div class="outputs">
+          ${outputsArray.map(name => `
+            <div class="io-item" style="justify-content:flex-end;">
+              <span style="margin-right:8px;">${name}</span>
+              <div class="io-connector output" data-nodeid="${node.id}" data-type="output" data-name="${name}" title="Output: ${name}"></div>
+            </div>`).join('')}
+        </div>
+      </div>
+      ${type.renderContent ? type.renderContent(node) : ''}
+    `;
+    
+    canvasContentWrapper.appendChild(nodeEl);
+    node.dom = nodeEl;
+
+    if (type.setupEventListeners) {
+        type.setupEventListeners(node);
+    }
+
+    nodeEl.querySelector('.node-header').addEventListener('mousedown', onNodeDragStart);
+
+    nodeEl.querySelectorAll('.io-connector').forEach(connector => {
+      connector.addEventListener('mousedown', onConnectorClick);
+    });
+  }
+  
+  function updateCanvasTransform() {
+      canvasContentWrapper.style.transform = `translate(${app.canvasTranslateX}px, ${app.canvasTranslateY}px) scale(${app.canvasScale})`;
+      redrawAllConnections();
+  }
+
+  function updateNodePosition(node, x, y) {
+    node.x = x;
+    node.y = y;
+    node.dom.style.left = x + 'px';
+    node.dom.style.top = y + 'px';
+    updateConnectionsForNode(node.id);
+  }
+
+  function getConnectorPosition(nodeId, ioType, ioName) {
+    const node = app.nodes.find(n => n.id === nodeId);
+    if (!node || !node.dom) return null;
+    const el = node.dom.querySelector(`.io-connector.${ioType}[data-name="${ioName}"]`);
+    if (!el) return null;
+
+    const wrapperRect = canvasContentWrapper.getBoundingClientRect();
+    const rect = el.getBoundingClientRect();
+    
+    const x = rect.left + rect.width / 2 - wrapperRect.left;
+    const y = rect.top + rect.height / 2 - wrapperRect.top;
+
+    return { x, y };
+  }
+
+  function updateConnectionsForNode(nodeId) {
+    connectionsSvg.querySelectorAll(`[data-from-nodeid="${nodeId}"], [data-to-nodeid="${nodeId}"]`).forEach(line => {
+        const fromNodeId = Number(line.dataset.fromNodeid);
+        const fromOutput = line.dataset.fromoutput;
+        const toNodeId = Number(line.dataset.toNodeid);
+        const toInput = line.dataset.toinput;
+
+        const fromPos = getConnectorPosition(fromNodeId, 'output', fromOutput);
+        const toPos = getConnectorPosition(toNodeId, 'input', toInput);
+        if (fromPos && toPos) {
+            line.setAttribute('x1', fromPos.x);
+            line.setAttribute('y1', fromPos.y);
+            line.setAttribute('x2', toPos.x);
+            line.setAttribute('y2', toPos.y);
+        } else {
+            line.remove();
+            app.connections = app.connections.filter(conn => 
+                !(conn.fromNodeId === fromNodeId && conn.fromOutput === fromOutput && 
+                  conn.toNodeId === toNodeId && conn.toInput === toInput)
+            );
+        }
+    });
+  }
+  
+  function redrawAllConnections() {
+    connectionsSvg.innerHTML = '';
+    for (const conn of app.connections) {
+      const fromPos = getConnectorPosition(conn.fromNodeId, 'output', conn.fromOutput);
+      const toPos = getConnectorPosition(conn.toNodeId, 'input', conn.toInput);
+      if (fromPos && toPos) {
+        const line = createSVGLine(fromPos.x, fromPos.y, toPos.x, toPos.y);
+        line.dataset.fromNodeid = conn.fromNodeId;
+        line.dataset.fromoutput = conn.fromOutput;
+        line.dataset.toNodeid = conn.toNodeId;
+        line.dataset.toinput = conn.toInput;
+      }
+    }
+  }
+
+  function startConnecting(startNodeId, startIoName, startIoType) {
+    const startPos = getConnectorPosition(startNodeId, startIoType, startIoName);
+    if (!startPos) return;
+
+    const tempLine = createSVGLine(startPos.x, startPos.y, startPos.x, startPos.y);
+    tempLine.style.pointerEvents = 'none';
+
+    app.connecting = { startNodeId, startIoName, startIoType, tempLine };
+    
+    window.addEventListener('mousemove', onConnectionDrag);
+    window.addEventListener('mouseup', onConnectionEnd, { once: true });
+  }
+
+  function cancelConnecting() {
+    if (!app.connecting) return;
+    if (app.connecting.tempLine.parentNode) {
+        app.connecting.tempLine.parentNode.removeChild(app.connecting.tempLine);
+    }
+    app.connecting = null;
+    window.removeEventListener('mousemove', onConnectionDrag);
+  }
+
+  function deleteNode(nodeId) {
+    app.nodes = app.nodes.filter(node => node.id !== nodeId);
+    app.connections = app.connections.filter(conn => 
+      conn.fromNodeId !== nodeId && conn.toNodeId !== nodeId
+    );
+    const nodeEl = canvasContentWrapper.querySelector(`.node[data-id="${nodeId}"]`);
+    if (nodeEl) {
+      nodeEl.remove();
+    }
+    redrawAllConnections();
+  }
+
+  function duplicateNode(nodeId) {
+    const originalNode = app.nodes.find(n => n.id === nodeId);
+    if (!originalNode) return;
+
+    const type = nodeTypes[originalNode.type];
+    if (type && type.update) {
+        type.update(originalNode);
+    }
+
+    const newNodeX = originalNode.x + 30;
+    const newNodeY = originalNode.y + 30;
+
+    const newNode = {
+      id: app.nextNodeId++,
+      type: originalNode.type,
+      x: newNodeX,
+      y: newNodeY,
+      dom: null,
+      value: originalNode.value !== undefined ? JSON.parse(JSON.stringify(originalNode.value)) : undefined,
+      outputCount: originalNode.outputCount
+    };
+
+    app.nodes.push(newNode);
+    renderNode(newNode);
+  }
+
+  function clearWorkbench() {
+    app.nodes = [];
+    app.connections = [];
+    app.nextNodeId = 1;
+    canvasContentWrapper.querySelectorAll('.node').forEach(nodeEl => nodeEl.remove());
+    connectionsSvg.innerHTML = '';
+    // Reset pan and zoom
+    app.canvasScale = 1;
+    app.canvasTranslateX = 0;
+    app.canvasTranslateY = 0;
+    updateCanvasTransform();
+  }
+
+  function onNodeDragStart(e) {
+    if (e.button !== 0) return;
+    if (e.target.closest('.io-connector, .node-input, .splitter-range, input, textarea')) return;
+    e.preventDefault();
+    const nodeId = parseInt(e.target.closest('.node').dataset.id);
+    const node = app.nodes.find(n => n.id === nodeId);
+    if (!node) return;
+
+    app.draggedNode = node;
+    
+    const nodeScreenX = node.x * app.canvasScale + app.canvasTranslateX;
+    const nodeScreenY = node.y * app.canvasScale + app.canvasTranslateY;
+
+    app.dragOffsetX = e.clientX - nodeScreenX;
+    app.dragOffsetY = e.clientY - nodeScreenY;
+
+    node.dom.classList.add('dragging');
+    window.addEventListener('mousemove', onNodeDrag);
+    window.addEventListener('mouseup', onNodeDragEnd, { once: true });
+  }
+
+  function onNodeDrag(e) {
+    if (!app.draggedNode) return;
+    e.preventDefault();
+
+    const newX = (e.clientX - app.dragOffsetX - app.canvasTranslateX) / app.canvasScale;
+    const newY = (e.clientY - app.dragOffsetY - app.canvasTranslateY) / app.canvasScale;
+
+    updateNodePosition(app.draggedNode, newX, newY);
+  }
+
+  function onNodeDragEnd() {
+    if (app.draggedNode) {
+      app.draggedNode.dom.classList.remove('dragging');
+    }
+    app.draggedNode = null;
+    window.removeEventListener('mousemove', onNodeDrag);
+  }
+  
+  function onConnectorClick(e) {
+    e.stopPropagation();
+    const { nodeid, type, name } = e.target.dataset;
+    const clickedNodeId = parseInt(nodeid);
+
+    if (app.connecting) {
+        const { startNodeId, startIoType } = app.connecting;
+
+        if (clickedNodeId === startNodeId || type === startIoType) {
+            cancelConnecting();
+            return;
+        }
+
+        const from = startIoType === 'output'
+            ? { nodeId: startNodeId, ioName: app.connecting.startIoName }
+            : { nodeId: clickedNodeId, ioName: name };
+        const to = startIoType === 'input'
+            ? { nodeId: startNodeId, ioName: app.connecting.startIoName }
+            : { nodeId: clickedNodeId, ioName: name };
+
+        if (app.connections.some(c => c.toNodeId === to.nodeId && c.toInput === to.ioName)) {
+            cancelConnecting();
+            return;
+        }
+
+        app.connections.push({
+            fromNodeId: from.nodeId,
+            fromOutput: from.ioName,
+            toNodeId: to.nodeId,
+            toInput: to.ioName
+        });
+
+        cancelConnecting();
+        redrawAllConnections();
+
+    } else {
+        startConnecting(clickedNodeId, name, type);
+    }
+}
+
+  function onConnectionDrag(e) {
+    if (!app.connecting) return;
+    e.preventDefault();
+    const wrapperRect = canvasContentWrapper.getBoundingClientRect();
+    const x = e.clientX - wrapperRect.left;
+    const y = e.clientY - wrapperRect.top;
+    
+    app.connecting.tempLine.setAttribute('x2', x);
+    app.connecting.tempLine.setAttribute('y2', y);
+  }
+  
+  function onConnectionEnd(e) {
+    if (app.connecting && !e.target.closest('.io-connector')) {
+        cancelConnecting();
+    }
+  }
+
+  function onContextMenuClick(e) {
+    const action = e.target.dataset.action;
+    if (app.contextMenuNodeId && action) {
+      if (action === 'delete') {
+        deleteNode(app.contextMenuNodeId);
+      } else if (action === 'duplicate') {
+        duplicateNode(app.contextMenuNodeId);
+      }
+    }
+    hideContextMenu();
+  }
+
+  function hideContextMenu() {
+    contextMenu.style.display = 'none';
+    app.contextMenuNodeId = null;
+  }
+  
+  function onCanvasMouseDown(e) {
+    const clickedNodeEl = e.target.closest('.node');
+
+    if (e.button === 2 || e.ctrlKey) { 
+        e.preventDefault();
+        if (clickedNodeEl) {
+            app.contextMenuNodeId = parseInt(clickedNodeEl.dataset.id);
+            contextMenu.style.left = `${e.clientX}px`;
+            contextMenu.style.top = `${e.clientY}px`;
+            contextMenu.style.display = 'block';
+        } else {
+            app.isPanning = true;
+            app.lastPanX = e.clientX;
+            app.lastPanY = e.clientY;
+            canvas.style.cursor = 'grabbing';
+            window.addEventListener('mousemove', onCanvasPan);
+            window.addEventListener('mouseup', onCanvasPanEnd, { once: true });
+        }
+    } else if (e.button === 0) { 
+        if (!clickedNodeEl && !contextMenu.contains(e.target)) {
+            hideContextMenu();
+        }
+    }
+  }
+
+  function onCanvasPan(e) {
+      if (!app.isPanning) return;
+      e.preventDefault();
+      const dx = e.clientX - app.lastPanX;
+      const dy = e.clientY - app.lastPanY;
+
+      app.canvasTranslateX += dx;
+      app.canvasTranslateY += dy;
+      
+      app.lastPanX = e.clientX;
+      app.lastPanY = e.clientY;
+      
+      updateCanvasTransform();
+  }
+  
+  function onCanvasPanEnd() {
+      app.isPanning = false;
+      canvas.style.cursor = 'default';
+      window.removeEventListener('mousemove', onCanvasPan);
+  }
+
+  function onCanvasWheel(e) {
+      e.preventDefault();
+      const zoomIntensity = 0.1;
+      const minScale = 0.2;
+      const maxScale = 2.5;
+      
+      const delta = e.deltaY > 0 ? -1 : 1;
+      
+      const oldScale = app.canvasScale;
+      const newScale = Math.max(minScale, Math.min(maxScale, oldScale + delta * zoomIntensity));
+
+      const canvasRect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - canvasRect.left;
+      const mouseY = e.clientY - canvasRect.top;
+
+      app.canvasTranslateX = mouseX - (mouseX - app.canvasTranslateX) * (newScale / oldScale);
+      app.canvasTranslateY = mouseY - (mouseY - app.canvasTranslateY) * (newScale / oldScale);
+      app.canvasScale = newScale;
+      
+      updateCanvasTransform();
+  }
+
+  async function evaluateNodeOutput(nodeId, outputName, visited = new Set()) {
+    const visitedKey = `${nodeId}-${outputName}`;
+    if (visited.has(visitedKey)) {
+        console.warn("Circular dependency detected at node", nodeId);
+        return null;
+    }
+    visited.add(visitedKey);
+
+    const node = app.nodes.find(n => n.id === nodeId);
+    if (!node) return null;
+
+    const type = nodeTypes[node.type];
+    
+    if (type.update) {
+      type.update(node);
+    }
+
+    if (type.getOutput) {
+      return type.getOutput.call(node, outputName);
+    }
+
+    if (type.compute) {
+      const inputs = {};
+      const requiredInputs = typeof type.inputs === 'function' ? type.inputs(node) : type.inputs;
+      for (const inputName of requiredInputs) {
+        const conn = app.connections.find(c => c.toNodeId === nodeId && c.toInput === inputName);
+        if (!conn) {
+          if (node.type === 'AskPollinationsNode' && inputName === 'prompt') {
+            inputs[inputName] = node.value; 
+          } else {
+            inputs[inputName] = null;
+          }
+          continue;
+        }
+        inputs[inputName] = await evaluateNodeOutput(conn.fromNodeId, conn.fromOutput, new Set(visited));
+      }
+      return await type.compute.call(node, inputs);
+    }
+    return null;
+  }
+
+  async function runGraph() {
+    const outputNodes = app.nodes.filter(n => n.type === 'OutputNode');
+    if (outputNodes.length === 0) {
+      const prevMessage = document.getElementById('user-message');
+      if(prevMessage) prevMessage.remove();
+      
+      const message = document.createElement('div');
+      message.id = 'user-message';
+      message.textContent = "No Output Node found! Add an 'Output' node to see results.";
+      message.style.position = 'fixed';
+      message.style.top = '20px';
+      message.style.left = '50%';
+      message.style.transform = 'translateX(-50%)';
+      message.style.backgroundColor = 'var(--node-header-bg)';
+      message.style.color = 'white';
+      message.style.padding = '10px 20px';
+      message.style.borderRadius = '8px';
+      message.style.zIndex = '1000';
+      document.body.appendChild(message);
+      setTimeout(() => message.remove(), 3000);
+      return;
+    }
+    
+    app.nodes.forEach(node => {
+        if (node.type === 'OutputNode') {
+            const contentDiv = node.dom.querySelector('.node-content');
+            if(contentDiv) {
+                contentDiv.textContent = 'Calculating...';
+            }
+        } else if (node.type === 'AskPollinationsNode') {
+            const resultSpan = node.dom.querySelector('.pollinations-result');
+            if (resultSpan) resultSpan.textContent = '...';
+        }
+    });
+
+
+    for (const outNode of outputNodes) {
+      const conn = app.connections.find(c => c.toNodeId === outNode.id && c.toInput === "input");
+      let result = null;
+      if (conn) {
+        result = await evaluateNodeOutput(conn.fromNodeId, conn.fromOutput);
+      }
+      const contentDiv = outNode.dom.querySelector('.node-content');
+      if(contentDiv) {
+        contentDiv.textContent = result !== null ? JSON.stringify(result, null, 2) : 'null';
+      }
+    }
+  }
+
+  function exportGraphData() {
+    app.nodes.forEach(node => {
+        const type = nodeTypes[node.type];
+        if (type && type.update) {
+            type.update(node);
+        }
+    });
+
+    return {
+      nodes: app.nodes.map(node => {
+        const exportedNode = {
+          id: node.id,
+          type: node.type,
+          x: node.x,
+          y: node.y
+        };
+        if (['NumberNode', 'TextNode', 'AskPollinationsNode'].includes(node.type) && node.value !== undefined) {
+          exportedNode.value = node.value;
+        }
+        if (node.type === 'SplitterNode') {
+            exportedNode.outputCount = node.outputCount;
+        }
+        return exportedNode;
+      }),
+      connections: app.connections.map(conn => ({
+        fromNodeId: conn.fromNodeId,
+        fromOutput: conn.fromOutput,
+        toNodeId: conn.toNodeId,
+        toInput: conn.toInput
+      }))
+    };
+  }
+  
+  function generateJsCode(graphData) {
+    return `
+const fetch = require('node-fetch'); // Add this line if running in Node.js
+const nodeGraph = ${JSON.stringify(graphData, null, 2)};
+
+// Created using Adolfo GM's Node Graph Editor
+
+const exportedNodeTypes = {
+  NumberNode: { getOutput: (node) => node.value },
+  TextNode: { getOutput: (node) => node.value },
+  CurrentDateNode: { getOutput: () => new Date().toISOString().slice(0, 10) },
+  CurrentTimeNode: { getOutput: () => new Date().toTimeString().slice(0, 8) },
+  SplitterNode: { compute: (inputs) => inputs["input"] },
+  AddNode: { compute: (inputs) => (typeof inputs.a === 'number' && typeof inputs.b === 'number') ? inputs.a + inputs.b : null },
+  SubtractNode: { compute: (inputs) => (typeof inputs.a === 'number' && typeof inputs.b === 'number') ? inputs.a - inputs.b : null },
+  MultiplyNode: { compute: (inputs) => (typeof inputs.x === 'number' && typeof inputs.y === 'number') ? inputs.x * inputs.y : null },
+  DivideNode: { compute: (inputs) => (typeof inputs.a === 'number' && typeof inputs.b === 'number' && inputs.b !== 0) ? inputs.a / inputs.b : null },
+  MergeTextNode: { compute: (inputs) => String(inputs.text1 ?? "") + String(inputs.text2 ?? "") },
+  AskPollinationsNode: {
+    compute: async function(inputs) {
+      const promptText = inputs.prompt ?? (this.value || "");
+      if (!promptText) { console.warn("Pollinations: No prompt."); return null; }
+      try {
+        const res = await fetch(\`https://text.pollinations.ai/\${encodeURIComponent(promptText)}\`);
+        if (!res.ok) throw new Error(\`HTTP error! status: \${res.status}\`);
+        return await res.text();
+      } catch (e) { console.error("Error fetching Pollinations:", e); return null; }
+    }
+  },
+  OutputNode: {}
+};
+
+async function executeNodeGraph(graph, defs) {
+  const outputs = new Map();
+  async function resolve(nodeId, outputName, visited = new Set()) {
+    const key = \`\${nodeId}-\${outputName}\`;
+    if (visited.has(key)) { console.warn("Circular dependency:", key); return null; }
+    if (outputs.has(key)) return outputs.get(key);
+    
+    const node = graph.nodes.find(n => n.id === nodeId);
+    const typeDef = defs[node.type];
+    let result = null;
+
+    if (typeDef.getOutput) {
+      result = typeDef.getOutput(node);
+    } else if (typeDef.compute) {
+      const inputs = {};
+      const requiredIns = Array.isArray(typeDef.inputs) ? typeDef.inputs : (typeDef.inputs ? typeDef.inputs(node) : []);
+      for (const inputName of requiredIns) {
+        const conn = graph.connections.find(c => c.toNodeId === nodeId && c.toInput === inputName);
+        if (conn) {
+          inputs[inputName] = await resolve(conn.fromNodeId, conn.fromOutput, new Set(visited));
+        } else {
+          inputs[inputName] = (node.type === 'AskPollinationsNode' && inputName === 'prompt') ? node.value : null;
+        }
+      }
+      result = await typeDef.compute.call(node, inputs);
+    }
+    
+    const requiredOuts = Array.isArray(typeDef.outputs) ? typeDef.outputs : (typeDef.outputs ? typeDef.outputs(node) : []);
+    for (const outName of requiredOuts) {
+      outputs.set(\`\${nodeId}-\${outName}\`, result);
+    }
+    return result;
+  }
+
+  const final = {};
+  for (const outNode of graph.nodes.filter(n => n.type === 'OutputNode')) {
+    const conn = graph.connections.find(c => c.toNodeId === outNode.id);
+    final[\`Output_\${outNode.id}\`] = conn ? await resolve(conn.fromNodeId, conn.fromOutput) : null;
+  }
+  return final;
+}
+
+executeNodeGraph(nodeGraph, exportedNodeTypes)
+  .then(results => {
+    console.log("Graph Execution Results:", JSON.stringify(results, null, 2));
+  })
+  .catch(err => {
+    console.error("Error executing node graph:", err);
+  });
+`;
+  }
+
+  function generatePythonCode(graphData) {
+    return `
+# Created using Adolfo GM's Node Graph Editor
+# NOTE: Please install the 'requests' library using 'pip install requests' before running this script.
+
+import requests
+import json
+from datetime import datetime
+
+node_graph = ${JSON.stringify(graphData, null, 2)}
+
+def ask_pollinations_api(prompt_text):
+    if not prompt_text:
+        print("Pollinations: No prompt provided.")
+        return None
+    try:
+        url = f"https://text.pollinations.ai/{requests.utils.quote(str(prompt_text))}"
+        response = requests.get(url)
+        response.raise_for_status()
+        return response.text
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching from Pollinations: {e}")
+        return None
+
+node_definitions = {
+    "NumberNode": {"get_output": lambda node: node.get("value")},
+    "TextNode": {"get_output": lambda node: node.get("value")},
+    "CurrentDateNode": {"get_output": lambda node: datetime.now().strftime("%Y-%m-%d")},
+    "CurrentTimeNode": {"get_output": lambda node: datetime.now().strftime("%H:%M:%S")},
+    "SplitterNode": {"compute": lambda inputs: inputs.get("input")},
+    "AddNode": {"compute": lambda inputs: inputs.get("a") + inputs.get("b") if isinstance(inputs.get("a"), (int, float)) and isinstance(inputs.get("b"), (int, float)) else None},
+    "SubtractNode": {"compute": lambda inputs: inputs.get("a") - inputs.get("b") if isinstance(inputs.get("a"), (int, float)) and isinstance(inputs.get("b"), (int, float)) else None},
+    "MultiplyNode": {"compute": lambda inputs: inputs.get("x") * inputs.get("y") if isinstance(inputs.get("x"), (int, float)) and isinstance(inputs.get("y"), (int, float)) else None},
+    "DivideNode": {"compute": lambda inputs: inputs.get("a") / inputs.get("b") if isinstance(inputs.get("a"), (int, float)) and isinstance(inputs.get("b"), (int, float)) and inputs.get("b") != 0 else None},
+    "MergeTextNode": {"compute": lambda inputs: str(inputs.get("text1") or "") + str(inputs.get("text2") or "")},
+    "AskPollinationsNode": {"compute": (lambda node: lambda inputs: ask_pollinations_api(inputs.get("prompt") or node.get("value")))},
+    "OutputNode": {}
+}
+
+def execute_node_graph(graph, defs):
+    outputs = {}
+    def resolve(node_id, output_name, visited=None):
+        visited = visited or set()
+        key = f"{node_id}-{output_name}"
+        if key in visited:
+            print(f"Circular dependency: {key}")
+            return None
+        if key in outputs:
+            return outputs[key]
+        
+        node = next((n for n in graph["nodes"] if n["id"] == node_id), None)
+        type_def = defs.get(node["type"])
+        result = None
+
+        if "get_output" in type_def:
+            result = type_def["get_output"](node)
+        elif "compute" in type_def:
+            inputs = {}
+            # Simplified input resolution for this generated script
+            for conn in graph["connections"]:
+                if conn["toNodeId"] == node_id:
+                    inputs[conn["toInput"]] = resolve(conn["fromNodeId"], conn["fromOutput"], visited | {key})
+
+            # Handle unconnected prompt for AskPollinations
+            if node["type"] == 'AskPollinationsNode' and 'prompt' not in inputs:
+                inputs['prompt'] = node.get('value')
+            
+            compute_func = type_def["compute"](node) if node["type"] == "AskPollinationsNode" else type_def["compute"]
+            result = compute_func(inputs)
+        
+        outputs[key] = result
+        return result
+
+    final_outputs = {}
+    for out_node in [n for n in graph["nodes"] if n["type"] == 'OutputNode']:
+        conn = next((c for c in graph["connections"] if c["toNodeId"] == out_node["id"]), None)
+        final_outputs[f"Output_{out_node['id']}"] = resolve(conn["fromNodeId"], conn["fromOutput"]) if conn else None
+    
+    return final_outputs
+
+if __name__ == "__main__":
+    results = execute_node_graph(node_graph, node_definitions)
+    print("Graph Execution Results:", json.dumps(results, indent=2))
+`;
+  }
+  
+  function downloadFile(content, filename, contentType) {
+    const blob = new Blob([content], { type: contentType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  async function exportProjectToZip() {
+    if (typeof JSZip === 'undefined') {
+        alert('JSZip library not loaded. Cannot create zip file.');
+        return;
+    }
+    
+    const graphData = exportGraphData();
+    const jsCode = generateJsCode(graphData);
+    const pythonCode = generatePythonCode(graphData);
+
+    const zip = new JSZip();
+    const folder = zip.folder("aggm-nodes");
+    folder.file("nodes_graph.js", jsCode);
+    folder.file("nodes_graph.py", pythonCode);
+
+    const blob = await zip.generateAsync({ type: "blob" });
+    downloadFile(blob, 'aggm-nodes.zip', 'application/zip');
+  }
+
+  function importNodes() {
+    importNodesFile.click();
+  }
+
+  function handleFileImport(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const fileContent = e.target.result;
+        let importedGraph;
+
+        try {
+            importedGraph = JSON.parse(fileContent);
+        } catch (jsonError) {
+            const jsMatch = fileContent.match(/const nodeGraph = (\{[\s\S]*?\});/);
+            if (jsMatch && jsMatch[1]) {
+                try {
+                   importedGraph = (new Function(`return ${jsMatch[1]}`))();
+                } catch(e) {
+                   throw new Error("Could not parse the nodeGraph object from the JS file.");
+                }
+            } else {
+                 throw new Error("File content is not a valid graph JSON or JS export.");
+            }
+        }
+        
+        clearWorkbench();
+
+        app.nodes = [];
+        app.connections = [];
+        app.nextNodeId = 1;
+
+        if (importedGraph.nodes) {
+          importedGraph.nodes.forEach(n => {
+            const newNode = {
+              id: n.id,
+              type: n.type,
+              x: n.x,
+              y: n.y,
+              dom: null,
+              value: n.value,
+              outputCount: n.outputCount
+            };
+            app.nodes.push(newNode);
+            renderNode(newNode);
+            app.nextNodeId = Math.max(app.nextNodeId, n.id + 1);
+          });
+        }
+
+
+        if (importedGraph.connections) {
+          app.connections = importedGraph.connections.map(c => ({...c}));
+        }
+        redrawAllConnections();
+
+        console.log("Nodes imported successfully!");
+
+      } catch (error) {
+        console.error("Error importing nodes:", error);
+        alert("Failed to import nodes: " + error.message);
+      }
+    };
+    reader.readAsText(file);
+    importNodesFile.value = '';
+  }
+
+  function createSVGLine(x1, y1, x2, y2) {
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("stroke", "var(--connector-color)");
+    line.setAttribute("stroke-width", "3");
+    line.setAttribute("stroke-linecap", "round");
+    line.setAttribute("x1", x1);
+    line.setAttribute("y1", y1);
+    line.setAttribute("x2", x2);
+    line.setAttribute("y2", y2);
+    connectionsSvg.appendChild(line);
+    return line;
+  }
+
+  function renderSidebar(filter = '') {
+    nodeList.innerHTML = '';
+    const lowerCaseFilter = filter.toLowerCase();
+    Object.entries(nodeTypes).forEach(([key, type]) => {
+      if (type.title.toLowerCase().includes(lowerCaseFilter)) {
+        const el = document.createElement('div');
+        el.classList.add('node-type');
+        el.textContent = type.title;
+        el.title = `Add ${type.title}`;
+        el.onclick = () => createNode(key);
+        nodeList.appendChild(el);
+      }
+    });
+  }
+  
+  function initialize() {
+    renderSidebar();
+    runBtn.onclick = runGraph;
+    exportProjectBtn.onclick = exportProjectToZip;
+    importNodesBtn.onclick = importNodes;
+    importNodesFile.addEventListener('change', handleFileImport);
+
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    canvas.addEventListener('mousedown', onCanvasMouseDown);
+    canvas.addEventListener('wheel', onCanvasWheel, { passive: false });
+
+    contextMenu.addEventListener('click', onContextMenuClick);
+    window.addEventListener('mousedown', (e) => {
+      if (!contextMenu.contains(e.target) && !e.target.closest('.node')) {
+        hideContextMenu();
+      }
+    });
+
+    searchNodesInput.addEventListener('input', (e) => {
+      renderSidebar(e.target.value);
+    });
+  }
+
+  initialize();
+</script>
 
 </body>
 </html>
