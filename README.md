@@ -12,8 +12,10 @@ Version 2.0 introduces a more intuitive, modern, and user-centric design, making
 - Connect nodes to form workflows
 - Save and load workflows
 - Export to Python code or JavaScript code
+- Support to pan and zoom on the workspace
+- More nodes
 
-# License
+## License
 
 MIT License
 
