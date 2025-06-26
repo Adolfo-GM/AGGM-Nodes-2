@@ -1,3 +1,5 @@
+![Aggm Nodes](logo.png)
+
 # Aggm Nodes 
 ## 2.0
 
