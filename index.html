@@ -28,8 +28,6 @@
     --context-menu-item-hover: #555555;
     --search-input-bg: #3c3c3c;
     --search-input-border: #555;
-    --danger-color: #ff4d4d;
-    --danger-hover-bg: #ff3333;
   }
   body, html {
     margin: 0;
@@ -318,19 +316,26 @@
     outline: none;
     border-color: var(--search-input-border);
   }
-  #clear-workspace-btn {
+  .top-control-btn {
     padding: 8px 12px;
     font-size: 0.9rem;
-    background-color: var(--danger-color);
-    color: var(--text-color);
+    background-color: var(--btn-bg);
+    color: var(--btn-text);
     font-weight: bold;
     border: none;
     border-radius: 8px;
     cursor: pointer;
-    transition: background-color 0.2s;
+    transition: background-color 0.2s, color 0.2s;
   }
-  #clear-workspace-btn:hover {
-    background-color: var(--danger-hover-bg);
+  .top-control-btn:hover {
+    background-color: var(--btn-text);
+    color: var(--btn-bg);
+  }
+  #node-counter {
+    font-size: 0.9rem;
+    color: var(--text-color);
+    padding: 0 10px;
+    opacity: 0.7;
   }
 </style>
 <meta name="author" content="Adolfo GM">
@@ -359,8 +364,9 @@
   </div>
   
   <div id="top-right-controls">
+    <span id="node-counter" title="Current node count">Nodes: 0</span>
     <input type="text" id="project-name-input" placeholder="Project Name" title="Current Project Name">
-    <button id="clear-workspace-btn" title="Clear Workspace">Clear</button>
+    <button id="clear-workspace-btn" class="top-control-btn" title="Clear Workspace">Clear</button>
   </div>
 
   <button id="run-btn" title="Run the node graph">▶ Run</button>
@@ -653,6 +659,12 @@
   const searchNodesInput = document.getElementById('search-nodes');
   const projectNameInput = document.getElementById('project-name-input');
   const clearWorkspaceBtn = document.getElementById('clear-workspace-btn');
+  const nodeCounter = document.getElementById('node-counter');
+
+  function updateNodeCounter() {
+    const count = app.nodes.length;
+    nodeCounter.textContent = `Nodes: ${count}`;
+  }
 
   function saveStateToLocalStorage() {
       const state = {
@@ -690,6 +702,7 @@
 
         app.nodes.forEach(node => renderNode(node));
         updateCanvasTransform();
+        updateNodeCounter();
         
     } catch (error) {
         console.error("Failed to load saved state:", error);
@@ -725,6 +738,7 @@
         app.nodes.push(node);
     }
     renderNode(node);
+    updateNodeCounter();
     if (!id) {
         saveStateToLocalStorage();
     }
@@ -805,8 +819,9 @@
     const wrapperRect = canvasContentWrapper.getBoundingClientRect();
     const rect = el.getBoundingClientRect();
     
-    const x = (rect.left + rect.width / 2 - wrapperRect.left) / app.canvasScale;
-    const y = (rect.top + rect.height / 2 - wrapperRect.top) / app.canvasScale;
+    // This calculation is tricky. We need the position relative to the *untransformed* wrapper
+    const x = node.x + (el.offsetLeft + el.offsetWidth / 2);
+    const y = node.y + (el.offsetTop + el.offsetHeight / 2);
 
     return { x, y };
   }
@@ -877,6 +892,7 @@
       nodeEl.remove();
     }
     redrawAllConnections();
+    updateNodeCounter();
     saveStateToLocalStorage();
   }
 
@@ -904,6 +920,7 @@
 
     app.nodes.push(newNode);
     renderNode(newNode);
+    updateNodeCounter();
     saveStateToLocalStorage();
   }
 
@@ -917,12 +934,13 @@
     app.connections = [];
     app.nextNodeId = 1;
     projectNameInput.value = "My Project";
-    canvasContentWrapper.querySelectorAll('.node').forEach(nodeEl => nodeEl.remove());
+    canvasContentWrapper.innerHTML = '';
     connectionsSvg.innerHTML = '';
     app.canvasScale = 1;
     app.canvasTranslateX = 0;
     app.canvasTranslateY = 0;
     updateCanvasTransform();
+    updateNodeCounter();
     if (confirmFirst) {
         localStorage.removeItem('aggmNodesProject');
     }
@@ -1228,15 +1246,6 @@
   }
   
   function generateJsCode(graphData, projectName) {
-    const runtimeNodeTypes = {};
-    for(const key in nodeTypes){
-        const type = nodeTypes[key];
-        runtimeNodeTypes[key] = {};
-        if(type.getOutput) runtimeNodeTypes[key].getOutput = type.getOutput.toString();
-        if(type.compute) runtimeNodeTypes[key].compute = type.compute.toString().replace(/this\.dom/g, 'null');
-        if(type.inputs) runtimeNodeTypes[key].inputs = type.inputs;
-    }
-
     return `
 // Project: ${projectName}
 // Created using Adolfo GM's Node Graph Editor
@@ -1246,12 +1255,92 @@
     const nodeGraph = ${JSON.stringify(graphData, null, 2)};
 
     const runtimeNodeTypes = {
-    ${Object.entries(runtimeNodeTypes).map(([key, val]) => `
-        "${key}": {
-            ${val.getOutput ? `getOutput: ${val.getOutput},` : ''}
-            ${val.compute ? `compute: ${val.compute},` : ''}
-            inputs: ${JSON.stringify(val.inputs)}
-        }`).join(',\n')}
+        NumberNode: {
+            inputs: [],
+            getOutput: function() { return this.value; }
+        },
+        TextNode: {
+            inputs: [],
+            getOutput: function() { return this.value; }
+        },
+        CurrentDateNode: {
+            inputs: [],
+            getOutput: function() {
+                const date = new Date();
+                return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
+            }
+        },
+        CurrentTimeNode: {
+            inputs: [],
+            getOutput: function() {
+                const date = new Date();
+                return String(date.getHours()).padStart(2, '0') + ':' + String(date.getMinutes()).padStart(2, '0') + ':' + String(date.getSeconds()).padStart(2, '0');
+            }
+        },
+        SplitterNode: {
+            inputs: ["input"],
+            compute: function(inputs) { return inputs["input"]; }
+        },
+        AddNode: {
+            inputs: ["a", "b"],
+            compute: function(inputs) {
+                const a = inputs["a"]; const b = inputs["b"];
+                if (typeof a !== 'number' || typeof b !== 'number') return null;
+                return a + b;
+            }
+        },
+        SubtractNode: {
+            inputs: ["a", "b"],
+            compute: function(inputs) {
+                const a = inputs["a"]; const b = inputs["b"];
+                if (typeof a !== 'number' || typeof b !== 'number') return null;
+                return a - b;
+            }
+        },
+        MultiplyNode: {
+            inputs: ["x", "y"],
+            compute: function(inputs) {
+                const x = inputs["x"]; const y = inputs["y"];
+                if (typeof x !== 'number' || typeof y !== 'number') return null;
+                return x * y;
+            }
+        },
+        DivideNode: {
+            inputs: ["a", "b"],
+            compute: function(inputs) {
+                const a = inputs["a"]; const b = inputs["b"];
+                if (typeof a !== 'number' || typeof b !== 'number' || b === 0) return null;
+                return a / b;
+            }
+        },
+        MergeTextNode: {
+            inputs: ["text1", "text2"],
+            compute: function(inputs) {
+                const text1 = inputs["text1"] !== null ? String(inputs["text1"]) : "";
+                const text2 = inputs["text2"] !== null ? String(inputs["text2"]) : "";
+                return text1 + text2;
+            }
+        },
+        AskPollinationsNode: {
+            inputs: ["prompt"],
+            compute: async function(inputs) {
+                const promptText = inputs["prompt"] !== null ? String(inputs["prompt"]) : (this.value || "");
+                if (!promptText) { return null; }
+                try {
+                    const encodedPrompt = encodeURIComponent(promptText);
+                    const url = \`https://text.pollinations.ai/\${encodedPrompt}\`;
+                    const response = await fetch(url);
+                    if (!response.ok) { throw new Error(\`HTTP error! status: \${response.status}\`); }
+                    return await response.text();
+                } catch (error) {
+                    console.error("Error fetching from Pollinations:", error);
+                    return null;
+                }
+            }
+        },
+        OutputNode: {
+            inputs: ["input"]
+        }
     };
 
     const evaluatedOutputs = new Map();
@@ -1281,7 +1370,7 @@
             result = type.getOutput.call(node, outputName);
         } else if (type.compute) {
             const inputs = {};
-            const requiredInputs = typeof type.inputs === 'function' ? type.inputs(node) : type.inputs;
+            const requiredInputs = type.inputs;
 
             for (const inputName of requiredInputs) {
                 const conn = nodeGraph.connections.find(c => c.toNodeId === nodeId && c.toInput === inputName);
@@ -1338,7 +1427,8 @@ import json
 import requests
 from datetime import datetime
 
-# --- Data Structure ---
+# --- Project and Graph Data ---
+projectName = "${projectName}"
 node_graph = ${JSON.stringify(graphData, null, 2)}
 
 # --- Node Logic Definitions ---
@@ -1470,9 +1560,8 @@ def evaluate_node_output(node_id, output_name, visited=None):
                     inputs[input_name] = None
                 continue
 
-            inputs[input_name] = evaluate_node_output(conn["fromNodeId"], conn["fromOutput"], visited)
+            inputs[input_name] = evaluate_node_output(conn["fromNodeId"], conn["fromOutput"], visited.copy())
         
-        # Pollinations node is special, it needs the node object itself
         if node_type == 'AskPollinationsNode':
              result = logic["compute"](inputs, node)
         else:
@@ -1496,7 +1585,10 @@ def main():
             result = evaluate_node_output(conn["fromNodeId"], conn["fromOutput"])
         
         print(f"▶ Result for Output Node {out_node['id']}:")
-        print(json.dumps(result, indent=2))
+        try:
+            print(json.dumps(result, indent=2))
+        except TypeError:
+            print(result)
 
 if __name__ == "__main__":
     main()
@@ -1557,7 +1649,6 @@ if __name__ == "__main__":
         const fileContent = e.target.result;
         let importedGraph;
 
-        // Try to find a JSON object in JS or Python files
         const jsonMatch = fileContent.match(/=\s*(\{[\s\S]*?\});?\s*(\n|$)/);
 
         if (jsonMatch && jsonMatch[1]) {
@@ -1567,7 +1658,6 @@ if __name__ == "__main__":
                throw new Error("Could not parse the JSON object from the script file.");
             }
         } else {
-            // Fallback to parsing the whole file as JSON
              try {
                 importedGraph = JSON.parse(fileContent);
              } catch(jsonError) {
@@ -1585,7 +1675,6 @@ if __name__ == "__main__":
         app.connections = importedGraph.connections || [];
         app.nextNodeId = Math.max(0, ...app.nodes.map(n => n.id)) + 1;
 
-        // Restore values that might not be in older formats
         app.nodes.forEach(node => {
             const type = nodeTypes[node.type];
             if(type.update) type.update(node);
@@ -1594,6 +1683,7 @@ if __name__ == "__main__":
         app.nodes.forEach(node => renderNode(node));
         redrawAllConnections();
         updateCanvasTransform();
+        updateNodeCounter();
         saveStateToLocalStorage();
         console.log("Nodes imported successfully!");
 
@@ -1659,6 +1749,7 @@ if __name__ == "__main__":
     });
 
     loadStateFromLocalStorage();
+    updateNodeCounter(); // Initial count on load
   }
 
   initialize();
